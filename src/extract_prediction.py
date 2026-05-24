@@ -12,6 +12,6 @@ def extract_prediction(text):
         pass
 
     return {
-        "score": None,
-        "rationale": None
+    "score": -1,
+    "rationale": "Parsing failed"
     }
