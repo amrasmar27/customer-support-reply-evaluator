@@ -6,6 +6,16 @@ __pycache__/
 # C extensions
 *.so
 
+# models
+models/
+checkpoints/
+*.bin
+*.safetensors
+
+# HF cache
+.cache/
+huggingface/
+
 # Distribution / packaging
 .Python
 build/
