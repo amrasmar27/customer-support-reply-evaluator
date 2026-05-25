@@ -226,3 +226,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+notebooks/03_finetuning_nancy_backup.ipynb
