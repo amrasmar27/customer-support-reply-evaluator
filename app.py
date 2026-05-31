@@ -1,12 +1,38 @@
 import gradio as gr
 import random
+import torch
+import pandas as pd
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 from src.prompts import build_prompt
 from src.extract_prediction import extract_prediction
 from src.generate_response import generate_response
 from src.inference import load_model
 
-model, tokenizer, device = load_model()
 
+# ======================
+# LOAD MODELS
+# ======================
+
+# Fine-tuned model (LoRA)
+finetuned_model, finetuned_tokenizer, device = load_model()
+
+# Baseline model (Mistral base)
+BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.2"
+
+baseline_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL_NAME,
+    device_map="auto",
+    torch_dtype=torch.float16
+)
+
+baseline_tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
+
+
+# ======================
+# RUBRIC
+# ======================
 RUBRIC = {
     "1": "Understands the customer’s problem clearly",
     "2": "Shows empathy and acknowledges frustration",
@@ -15,54 +41,47 @@ RUBRIC = {
 }
 
 
+# ======================
+# SCENARIOS
+# ======================
 SCENARIOS = [
-    # ===== Score 4 =====
     {
-        "task": "Customer did not receive their order after the expected delivery date and is requesting urgent update.",
-        "reference": "We sincerely apologize for the delay. Your order is on the way and will arrive within 2–3 business days.",
-        "submission": "We sincerely apologize for the delay and understand your frustration. Your order is currently on the way and will arrive within 2–3 business days. Please let us know if you need further assistance.",
+        "task": "Customer did not receive their order after delivery date.",
+        "reference": "We sincerely apologize. Your order will arrive in 2–3 days.",
+        "submission": "We sincerely apologize for the delay. Your order is on the way."
     },
-
-    # ===== Score 3 =====
     {
-        "task": "Customer received a damaged product and wants refund or replacement.",
-        "reference": "We apologize and will offer a replacement or refund immediately.",
-        "submission": "We are sorry for the damaged product. We can offer a refund or replacement. Please tell us your choice.",
+        "task": "Customer received damaged product.",
+        "reference": "We will refund or replace immediately.",
+        "submission": "We are sorry. We can refund or replace."
     },
-
-    # ===== Score 2 =====
     {
         "task": "Customer complains about delayed delivery.",
-        "reference": "We apologize for the delay and will update the customer with delivery time.",
-        "submission": "Your order is delayed. It will arrive soon.",
+        "reference": "We apologize and will update delivery time.",
+        "submission": "Your order is delayed."
     },
-
-    # ===== Score 1 =====
     {
-        "task": "Customer reports missing item in order.",
-        "reference": "We apologize and will investigate and resend missing item.",
-        "submission": "Check your order again.",
+        "task": "Customer reports missing item.",
+        "reference": "We will resend missing item.",
+        "submission": "We will check and get back to you."
     },
-
-    # ===== Score 0 =====
     {
-        "task": "Customer complains about double charge on account.",
-        "reference": "We will verify the transaction and refund any duplicate charge.",
-        "submission": "Not our problem. Contact your bank.",
-    },
-
-    # ===== More realistic variations =====
-    {
-        "task": "Customer asks for refund after receiving wrong item.",
-        "reference": "We apologize and will issue refund or replacement immediately.",
-        "submission": "We will check and get back to you soon.",
+        "task": "Customer reports double charge.",
+        "reference": "We will refund duplicate charge.",
+        "submission": "Not our problem. Contact bank."
     }
 ]
 
 
-
+# ======================
+# STATE
+# ======================
 current_reference = {"text": "", "visible": False}
 
+
+# ======================
+# FUNCTIONS
+# ======================
 def generate_example():
     ex = random.choice(SCENARIOS)
     current_reference["text"] = ex["reference"]
@@ -88,10 +107,58 @@ def predict(task, submission):
     }
 
     prompt = build_prompt(row)
-    output = generate_response(model, tokenizer, prompt, device)
-    parsed = extract_prediction(output)
 
-    return parsed.get("score"), parsed.get("rationale")
+    # ======================
+    # BASELINE
+    # ======================
+    baseline_output = generate_response(
+        baseline_model,
+        baseline_tokenizer,
+        prompt,
+        device
+    )
+    baseline_parsed = extract_prediction(baseline_output)
+
+    # ======================
+    # FINE-TUNED
+    # ======================
+    finetuned_output = generate_response(
+        finetuned_model,
+        finetuned_tokenizer,
+        prompt,
+        device
+    )
+    finetuned_parsed = extract_prediction(finetuned_output)
+
+    return (
+        baseline_parsed.get("score"),
+        baseline_parsed.get("rationale"),
+        finetuned_parsed.get("score"),
+        finetuned_parsed.get("rationale")
+    )
+
+
+# ======================
+# METRICS DATA
+# ======================
+metrics_df = pd.DataFrame([
+    {
+        "Model": "Baseline Model",
+        "Accuracy": 0.80,
+        "MAE": 0.20,
+        "QWK": 0.954545,
+        "ROUGE-L": 0.176876,
+        "BERTScore": 0.894274
+    },
+    {
+        "Model": "Fine-Tuned LoRA (Exp5)",
+        "Accuracy": 0.90,
+        "MAE": 0.10,
+        "QWK": 0.974400,
+        "ROUGE-L": 0.398176,
+        "BERTScore": 0.919493
+    }
+])
 
 
 # ======================
@@ -101,62 +168,77 @@ with gr.Blocks(theme=gr.themes.Soft(), title="AI Evaluator") as demo:
 
     gr.Markdown("# 🤖 Customer Support Reply Evaluator")
 
-    # =========================
-    # TOP SECTION (INPUT)
-    # =========================
-    with gr.Column():
-        task = gr.Textbox(label="Task", lines=3)
-        submission = gr.Textbox(label="Submission", lines=3)
+    with gr.Tabs():
 
-        with gr.Row():
-            eval_btn = gr.Button("🚀 Evaluate", variant="primary")
-            gen_btn = gr.Button("🎲 Generate Example")
+        # ======================
+        # TAB 1: EVALUATOR
+        # ======================
+        with gr.Tab("🧪 Evaluator"):
 
-        score = gr.Number(label="Score (0–4)")
-        rationale = gr.Textbox(label="Rationale", lines=5)
+            task = gr.Textbox(label="Task", lines=3)
+            submission = gr.Textbox(label="Submission", lines=3)
 
-    # =========================
-    # BOTTOM SECTION (DETAILS)
-    # =========================
-    gr.Markdown("---")
-    gr.Markdown("## 📌 Evaluation Details")
+            with gr.Row():
+                eval_btn = gr.Button("🚀 Evaluate", variant="primary")
+                gen_btn = gr.Button("🎲 Generate Example")
 
-    # ---- Rubric nice UI ----
-    with gr.Accordion("📊 Rubric (Evaluation Criteria)", open=False):
+            gr.Markdown("## 📊 Model Comparison")
 
-        for k, v in RUBRIC.items():
-            gr.Markdown(f"""
-### Criterion {k}
-{v}
-""")
+            with gr.Row():
 
-    # ---- Reference ----
-    with gr.Accordion("📄 Reference Answer (Hidden by default)", open=False):
+                with gr.Column():
+                    gr.Markdown("### 📉 Baseline Model")
+                    baseline_score = gr.Number(label="Score (0–4)")
+                    baseline_rationale = gr.Textbox(label="Rationale", lines=5)
 
+                with gr.Column():
+                    gr.Markdown("### 🚀 Fine-tuned Model")
+                    finetuned_score = gr.Number(label="Score (0–4)")
+                    finetuned_rationale = gr.Textbox(label="Rationale", lines=5)
+
+            # events inside tab
+            eval_btn.click(
+                fn=predict,
+                inputs=[task, submission],
+                outputs=[
+                    baseline_score,
+                    baseline_rationale,
+                    finetuned_score,
+                    finetuned_rationale
+                ]
+            )
+
+            gen_btn.click(
+                fn=generate_example,
+                inputs=[],
+                outputs=[task, submission]
+            )
+
+        # ======================
+        # TAB 2: METRICS TABLE
+        # ======================
+        with gr.Tab("📊 Metrics Table"):
+
+            gr.Markdown("## Model Performance Comparison")
+
+            gr.Dataframe(
+                value=metrics_df,
+                interactive=False
+            )
+
+    # ======================
+    # OPTIONAL: REFERENCE
+    # ======================
+    with gr.Accordion("📄 Reference Answer", open=False):
         ref_box = gr.Textbox(label="Reference", interactive=False)
         ref_state = gr.Textbox(value="🔒 Hidden", label="Status", interactive=False)
-
         toggle_btn = gr.Button("👁 Toggle Reference")
 
-    # =========================
-    # EVENTS
-    # =========================
-    eval_btn.click(
-        fn=predict,
-        inputs=[task, submission],
-        outputs=[score, rationale]
-    )
+        toggle_btn.click(
+            fn=toggle_reference,
+            inputs=[],
+            outputs=[ref_box, ref_state]
+        )
 
-    gen_btn.click(
-        fn=generate_example,
-        inputs=[],
-        outputs=[task, submission, ref_box, ref_state]
-    )
-
-    toggle_btn.click(
-        fn=toggle_reference,
-        inputs=[],
-        outputs=[ref_box, ref_state]
-    )
 
 demo.launch()
