@@ -138,10 +138,10 @@ The models were evaluated using:
 
 ### Final Results
 
-| Model                 | Accuracy |  MAE |    QWK |
-| --------------------- | -------: | ---: | -----: |
-| Baseline Model        |   80.00% | 0.20 | 0.9545 |
-| Fine-Tuned LoRA Model |   90.00% | 0.10 | 0.9744 |
+| Model                 | Accuracy |  MAE |    QWK   | ROUGE-L | BERTScore |
+| --------------------- | -------: | ---: | -------: | -------: | --------: |
+| Baseline Model        |   80.00% | 0.20 | 0.9545   | 0.1769   | 0.8943    |
+| Fine-Tuned LoRA Model |   90.00% | 0.10 | 0.9744   | 0.3982   | 0.9195    |
 
 The fine-tuned model improved accuracy by 10 percentage points and reduced MAE from 0.20 to 0.10. This shows that LoRA fine-tuning helped the model better align with the rubric-based scoring task.
 
