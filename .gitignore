@@ -10,7 +10,7 @@ __pycache__/
 
 checkpoints/
 *.bin
-*.safetensors
+
 
 # HF cache
 .cache/
